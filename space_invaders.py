@@ -117,7 +117,7 @@ class Spaceship:
     def __init__(self):
         self.width = SHIP_WIDTH
         self.height = SHIP_HEIGHT
-        self.lives = 3  # Start with 3 lives
+        self.lives = 1  # Default is 3 lives
         self.respawn_timer = 0
         self.respawn_delay = 60  # 1 second at 60 FPS
         self.flash_interval = 10  # Flash every 10 frames
@@ -294,23 +294,84 @@ def create_enemies(rows, cols, x_offset=50, y_offset=50, padding=10):
 
 # Main game loop
 def load_high_scores():
+    default_scores = [
+        {'name': 'CPU', 'score': 2000},
+        {'name': 'CPU', 'score': 1500},
+        {'name': 'CPU', 'score': 1000},
+        {'name': 'CPU', 'score': 500},
+        {'name': 'CPU', 'score': 250}
+    ]
+    
     try:
         with open('high_scores.json', 'r') as f:
             return json.load(f)
     except:
-        return []
+        with open('high_scores.json', 'w') as f:
+            json.dump(default_scores, f)
+        return default_scores
 
-def save_high_score(score):
+def is_high_score(score):
     scores = load_high_scores()
-    scores.append(score)
-    scores.sort(reverse=True)
+    if len(scores) < 5:
+        return True
+    lowest_score = min(s['score'] for s in scores)
+    return score > lowest_score
+
+def save_high_score(score, name):
+    scores = load_high_scores()
+    scores.append({'name': name, 'score': score})
+    # Sort by score (descending) and then by name
+    scores.sort(key=lambda x: (-x['score'], x['name']))
     scores = scores[:5]  # Keep only top 5 scores
-    with open('high_scores.json', 'w') as f:
-        json.dump(scores, f)
+    try:
+        with open('high_scores.json', 'w') as f:
+            json.dump(scores, f)
+    except Exception as e:
+        print(f'Error saving high score: {e}')
+
+def get_player_name(screen, font):
+    name = ''
+    input_active = True
+    input_rect = pygame.Rect(SCREEN_WIDTH//2 - 100, SCREEN_HEIGHT//2, 200, 32)
+    clock = pygame.time.Clock()
+    
+    while input_active:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN:
+                    input_active = False
+                elif event.key == pygame.K_BACKSPACE:
+                    name = name[:-1]
+                else:
+                    if len(name) < 10:  # Limit name length
+                        if event.unicode.isalnum():  # Only allow letters and numbers
+                            name += event.unicode
+        
+        screen.fill(BLACK)
+        
+        # Draw prompt
+        prompt_text = font.render('New High Score! Enter Your Name:', True, WHITE)
+        screen.blit(prompt_text, (SCREEN_WIDTH//2 - prompt_text.get_width()//2, SCREEN_HEIGHT//2 - 50))
+        
+        # Draw input box
+        pygame.draw.rect(screen, WHITE, input_rect, 2)
+        
+        # Draw input text
+        text_surface = font.render(name, True, WHITE)
+        screen.blit(text_surface, (input_rect.x + 5, input_rect.y + 5))
+        
+        pygame.display.flip()
+        clock.tick(FPS)
+    
+    return name if name else 'Unknown'
 
 def main():
     # Show the start screen
     show_start_screen(screen)
+    running = True
 
     spaceship = Spaceship()
     player_bullets = []  # List to store player bullets
@@ -332,23 +393,26 @@ def main():
         for i in range(ship.lives):
             surface.blit(ship.life_image, (10 + i * 30, 40))
 
-    while True:
+    while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+                return False  # Signal to quit the game
             # Fire bullet when space is pressed and there's no active bullet
             if event.type == pygame.KEYDOWN and not game_over:
                 if event.key == pygame.K_SPACE:
-                    if spaceship.double_shot:
-                        # Create two bullets side by side
-                        player_bullets.append(Bullet(spaceship.x + 10, spaceship.y))
-                        player_bullets.append(Bullet(spaceship.x + spaceship.width - 10, spaceship.y))
-                        shoot_sound.play()
-                    else:
-                        # Single bullet from the middle
-                        player_bullets.append(Bullet(spaceship.x + spaceship.width // 2 - BULLET_WIDTH // 2, spaceship.y))
-                        shoot_sound.play()
+                    active_bullets = len([b for b in player_bullets if b.active])
+                    max_bullets = 2 if spaceship.double_shot else 1
+                    
+                    if active_bullets < max_bullets:
+                        if spaceship.double_shot and active_bullets == 0:
+                            # Create two bullets side by side
+                            player_bullets.append(Bullet(spaceship.x + 10, spaceship.y))
+                            player_bullets.append(Bullet(spaceship.x + spaceship.width - 10, spaceship.y))
+                            shoot_sound.play()
+                        elif not spaceship.double_shot and active_bullets == 0:
+                            # Single bullet from the middle
+                            player_bullets.append(Bullet(spaceship.x + spaceship.width // 2 - BULLET_WIDTH // 2, spaceship.y))
+                            shoot_sound.play()
             
         keys = pygame.key.get_pressed()
         if not game_over:
@@ -520,28 +584,77 @@ def main():
             shield_text = font.render('Shield!', True, (0, 255, 255))
             screen.blit(shield_text, (SCREEN_WIDTH - 150, 40))
 
-        # Display game over message if needed
+        # Display game over message and handle restart
         if game_over:
-            save_high_score(score)
-            high_scores = load_high_scores()
+            # Handle high score first
+            if not hasattr(spaceship, 'name_entered'):
+                if is_high_score(score):
+                    # Clear any remaining events before name input
+                    pygame.event.clear()
+                    player_name = get_player_name(screen, font)
+                    save_high_score(score, player_name)
+                spaceship.name_entered = True
             
-            y_offset = SCREEN_HEIGHT // 2
-            msg = 'You Win!' if all(not enemy.alive for enemy in enemies) else 'Game Over!'
-            game_over_text = font.render(msg, True, WHITE)
-            screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, y_offset))
+            # Game over display loop
+            while True:
+                # Clear screen and draw game over state
+                screen.fill(BLACK)
+                
+                y_offset = SCREEN_HEIGHT // 2 - 100
+                msg = 'You Win!' if all(not enemy.alive for enemy in enemies) else 'Game Over!'
+                game_over_text = font.render(msg, True, WHITE)
+                screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, y_offset))
+                
+                # Display score
+                y_offset += 40
+                final_score_text = font.render(f'Final Score: {score}', True, WHITE)
+                screen.blit(final_score_text, (SCREEN_WIDTH // 2 - final_score_text.get_width() // 2, y_offset))
+                
+                # Display high scores
+                y_offset += 50
+                high_score_text = font.render('High Scores:', True, WHITE)
+                screen.blit(high_score_text, (SCREEN_WIDTH // 2 - high_score_text.get_width() // 2, y_offset))
+                
+                # Load fresh high scores each frame in case they changed
+                high_scores = load_high_scores()
+                for i, hs in enumerate(high_scores[:5]):
+                    y_offset += 30
+                    score_text = font.render(f'{i+1}. {hs["name"]}: {hs["score"]}', True, WHITE)
+                    screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, y_offset))
+                
+                # Display restart/quit instructions
+                y_offset += 50
+                restart_text = font.render('Press SPACE to Play Again or ESC to Quit', True, WHITE)
+                screen.blit(restart_text, (SCREEN_WIDTH // 2 - restart_text.get_width() // 2, y_offset))
+                
+                pygame.display.flip()
+                
+                # Handle input events
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        return False
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_SPACE:
+                            return True  # Restart game
+                        elif event.key == pygame.K_ESCAPE:
+                            return False  # Quit game
+                
+                clock.tick(FPS)
             
-            # Display high scores
-            y_offset += 50
-            high_score_text = font.render('High Scores:', True, WHITE)
-            screen.blit(high_score_text, (SCREEN_WIDTH // 2 - high_score_text.get_width() // 2, y_offset))
-            
-            for i, hs in enumerate(high_scores[:5]):
-                y_offset += 30
-                score_text = font.render(f'{i+1}. {hs}', True, WHITE)
-                screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, y_offset))
+            # We shouldn't reach here, but just in case
+            return False
 
         pygame.display.flip()
         clock.tick(FPS)
 
 if __name__ == '__main__':
-    main()
+    while True:
+        try:
+            if not main():  # If main returns False, quit the game
+                break
+        except Exception as e:
+            print(f"Error: {e}")
+            break
+    
+    pygame.quit()
+    sys.exit()
