@@ -3,8 +3,21 @@ import sys
 import random
 from screens import show_start_screen
 
-# Initialize pygame
+# Initialize pygame and sound
 pygame.init()
+pygame.mixer.init()
+
+# Load sound effects
+shoot_sound = pygame.mixer.Sound('sounds/shoot.wav')
+explosion_sound = pygame.mixer.Sound('sounds/explosion.wav')
+ufo_sound = pygame.mixer.Sound('sounds/ufo.wav')
+game_over_sound = pygame.mixer.Sound('sounds/game_over.wav')
+
+# Adjust sound volumes
+shoot_sound.set_volume(0.3)
+explosion_sound.set_volume(0.4)
+ufo_sound.set_volume(0.2)
+game_over_sound.set_volume(0.5)
 
 # Screen dimensions
 SCREEN_WIDTH = 800
@@ -66,13 +79,36 @@ class Spaceship:
     def __init__(self):
         self.width = SHIP_WIDTH
         self.height = SHIP_HEIGHT
+        self.lives = 3  # Start with 3 lives
+        self.respawn_timer = 0
+        self.respawn_delay = 60  # 1 second at 60 FPS
+        self.flash_interval = 10  # Flash every 10 frames
+        self.invulnerable = False
+        self.reset_position()
+        # Load and resize spaceship image
+        self.image = pygame.transform.scale(pygame.image.load('sprites/ship.png'), (SHIP_WIDTH, SHIP_HEIGHT))
+        # Create a smaller version for lives display
+        self.life_image = pygame.transform.scale(pygame.image.load('sprites/ship.png'), (25, 15))
+        self.destroyed = False
+        
+    def reset_position(self):
         self.x = (SCREEN_WIDTH - self.width) // 2
         self.y = SCREEN_HEIGHT - self.height - 10
         self.speed = SHIP_SPEED
         self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
-        # Load and resize spaceship image
-        self.image = pygame.transform.scale(pygame.image.load('sprites/ship.png'), (SHIP_WIDTH, SHIP_HEIGHT))
-        self.destroyed = False
+        
+    def respawn(self):
+        if self.lives > 0:
+            self.reset_position()
+            self.destroyed = False
+            self.respawn_timer = self.respawn_delay
+            self.invulnerable = True
+            
+    def update(self):
+        if self.respawn_timer > 0:
+            self.respawn_timer -= 1
+            if self.respawn_timer <= 0:
+                self.invulnerable = False
 
     def move(self, dx):
         self.x += dx * self.speed
@@ -84,7 +120,9 @@ class Spaceship:
         self.rect.x = self.x
 
     def draw(self, surface):
-        surface.blit(self.image, (self.x, self.y))
+        # Flash during invulnerability by only drawing every other interval
+        if not self.invulnerable or (self.respawn_timer // self.flash_interval) % 2 == 0:
+            surface.blit(self.image, (self.x, self.y))
 
 # Define the bullet class
 class Bullet:
@@ -229,6 +267,11 @@ def main():
     score = 0
     font = pygame.font.SysFont(None, 36)
     game_over = False
+    
+    def draw_lives(surface, ship):
+        # Draw lives in top-left corner
+        for i in range(ship.lives):
+            surface.blit(ship.life_image, (10 + i * 30, 40))
 
     while True:
         for event in pygame.event.get():
@@ -240,13 +283,16 @@ def main():
                 if event.key == pygame.K_SPACE and (bullet is None or not bullet.active):
                     # Bullet starts at the middle top of the spaceship
                     bullet = Bullet(spaceship.x + spaceship.width // 2 - BULLET_WIDTH // 2, spaceship.y)
+                    shoot_sound.play()
             
         keys = pygame.key.get_pressed()
         if not game_over:
-            if keys[pygame.K_LEFT]:
-                spaceship.move(-1)
-            if keys[pygame.K_RIGHT]:
-                spaceship.move(1)
+            spaceship.update()
+            if not spaceship.destroyed:
+                if keys[pygame.K_LEFT]:
+                    spaceship.move(-1)
+                if keys[pygame.K_RIGHT]:
+                    spaceship.move(1)
 
         # Enemy movement: check if any enemy will cross screen boundary in the next move
         drop = False
@@ -276,6 +322,7 @@ def main():
                     bullet.active = False
                     score += 10
                     explosions.append(Explosion(enemy.x, enemy.y))
+                    explosion_sound.play()
                     break
 
         # Check enemy bullet shooting: randomly let one alive enemy shoot
@@ -288,10 +335,16 @@ def main():
         for eb in enemy_bullets:
             if eb.active:
                 eb.update()
-                if not spaceship.destroyed and eb.rect.colliderect(spaceship.rect):
+                if not spaceship.destroyed and not spaceship.invulnerable and eb.rect.colliderect(spaceship.rect):
                     spaceship.destroyed = True
                     explosions.append(Explosion(spaceship.x, spaceship.y))
-                    game_over = True
+                    explosion_sound.play()
+                    spaceship.lives -= 1
+                    if spaceship.lives <= 0:
+                        game_over = True
+                        game_over_sound.play()
+                    else:
+                        spaceship.respawn()
         enemy_bullets = [eb for eb in enemy_bullets if eb.active]
 
         # Spawn and update UFO
@@ -301,6 +354,7 @@ def main():
                 ufo = UFO(-60, direction)  # start off-screen left
             else:
                 ufo = UFO(SCREEN_WIDTH, direction)  # start off-screen right
+            ufo_sound.play()
         if ufo:
             ufo.update()
 
@@ -312,6 +366,7 @@ def main():
             if bullet and bullet.active and bullet.rect.colliderect(ufo.rect):
                 bullet.active = False
                 explosions.append(Explosion(ufo.x, ufo.y))
+                explosion_sound.play()
                 score += UFO_BONUS_POINTS
                 ufo = None
             if ufo and not ufo.active:
@@ -350,9 +405,10 @@ def main():
         for exp in explosions:
             exp.draw(screen)
 
-        # Display score
+        # Display score and draw lives
         score_text = font.render(f"Score: {score}", True, WHITE)
         screen.blit(score_text, (10, 10))
+        draw_lives(screen, spaceship)
 
         # Display game over message if needed
         if game_over:
