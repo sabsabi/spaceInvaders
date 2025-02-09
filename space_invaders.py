@@ -1,6 +1,7 @@
 import pygame
 import sys
 import random
+import json
 from screens import show_start_screen
 
 # Initialize pygame and sound
@@ -57,9 +58,14 @@ ENEMY_SHOOT_PROB = 0.005
 
 # UFO settings
 UFO_SPEED = 3
-UFO_SPAWN_PROB = 0.005
+UFO_SPAWN_PROB = 0.004
 UFO_BONUS_POINTS = 150
 UFO_SHOOT_PROB = 0.005
+
+# Power-up settings
+POWERUP_SPEED = 2
+POWERUP_DURATION = 300  # frames
+POWERUP_DROP_CHANCE = 0.1  # 10% chance to drop from destroyed enemies
 
 # Enemy settings
 ENEMY_WIDTH = 40
@@ -75,6 +81,38 @@ pygame.display.set_caption('Space Invaders')
 clock = pygame.time.Clock()
 
 # Define the spaceship class
+class PowerUp:
+    def __init__(self, x, y, power_type):
+        self.x = x
+        self.y = y
+        self.type = power_type
+        self.speed = POWERUP_SPEED
+        self.active = True
+        self.width = 30
+        self.height = 30
+        self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        
+        # Load the power-up sprite
+        try:
+            self.image = pygame.transform.scale(pygame.image.load('sprites/powerUp.png'), (self.width, self.height))
+        except:
+            # Fallback to a colored rectangle if image not found
+            self.image = None
+            
+    def update(self):
+        self.y += self.speed
+        if self.y > SCREEN_HEIGHT:
+            self.active = False
+        self.rect.y = self.y
+        
+    def draw(self, surface):
+        if self.image:
+            surface.blit(self.image, (self.x, self.y))
+        else:
+            # Use different colors for different power-up types
+            color = (255, 255, 0) if self.type == 'double_shot' else (0, 255, 255)  # Yellow for double shot, cyan for shield
+            pygame.draw.rect(surface, color, self.rect)
+
 class Spaceship:
     def __init__(self):
         self.width = SHIP_WIDTH
@@ -90,6 +128,10 @@ class Spaceship:
         # Create a smaller version for lives display
         self.life_image = pygame.transform.scale(pygame.image.load('sprites/ship.png'), (25, 15))
         self.destroyed = False
+        # Power-up states
+        self.double_shot = False
+        self.shield = False
+        self.power_up_timer = 0
         
     def reset_position(self):
         self.x = (SCREEN_WIDTH - self.width) // 2
@@ -251,12 +293,27 @@ def create_enemies(rows, cols, x_offset=50, y_offset=50, padding=10):
     return enemies
 
 # Main game loop
+def load_high_scores():
+    try:
+        with open('high_scores.json', 'r') as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_high_score(score):
+    scores = load_high_scores()
+    scores.append(score)
+    scores.sort(reverse=True)
+    scores = scores[:5]  # Keep only top 5 scores
+    with open('high_scores.json', 'w') as f:
+        json.dump(scores, f)
+
 def main():
     # Show the start screen
     show_start_screen(screen)
 
     spaceship = Spaceship()
-    bullet = None
+    player_bullets = []  # List to store player bullets
     enemies = create_enemies(5, 10)
     enemy_bullets = []
     explosions = []
@@ -267,6 +324,8 @@ def main():
     score = 0
     font = pygame.font.SysFont(None, 36)
     game_over = False
+    power_ups = []
+    high_scores = load_high_scores()
     
     def draw_lives(surface, ship):
         # Draw lives in top-left corner
@@ -280,10 +339,16 @@ def main():
                 sys.exit()
             # Fire bullet when space is pressed and there's no active bullet
             if event.type == pygame.KEYDOWN and not game_over:
-                if event.key == pygame.K_SPACE and (bullet is None or not bullet.active):
-                    # Bullet starts at the middle top of the spaceship
-                    bullet = Bullet(spaceship.x + spaceship.width // 2 - BULLET_WIDTH // 2, spaceship.y)
-                    shoot_sound.play()
+                if event.key == pygame.K_SPACE:
+                    if spaceship.double_shot:
+                        # Create two bullets side by side
+                        player_bullets.append(Bullet(spaceship.x + 10, spaceship.y))
+                        player_bullets.append(Bullet(spaceship.x + spaceship.width - 10, spaceship.y))
+                        shoot_sound.play()
+                    else:
+                        # Single bullet from the middle
+                        player_bullets.append(Bullet(spaceship.x + spaceship.width // 2 - BULLET_WIDTH // 2, spaceship.y))
+                        shoot_sound.play()
             
         keys = pygame.key.get_pressed()
         if not game_over:
@@ -312,18 +377,26 @@ def main():
                 if enemy.alive:
                     enemy.update(enemy_dx, 0)
 
-        # Update bullet and check for collisions
-        if bullet and bullet.active:
-            bullet.update()
-            # Check collision with enemies
-            for enemy in enemies:
-                if enemy.alive and bullet.rect.colliderect(enemy.rect):
-                    enemy.alive = False
-                    bullet.active = False
-                    score += 10
-                    explosions.append(Explosion(enemy.x, enemy.y))
-                    explosion_sound.play()
-                    break
+        # Update player bullets and check for collisions
+        for bullet in player_bullets:
+            if bullet.active:
+                bullet.update()
+                # Check collision with enemies
+                for enemy in enemies:
+                    if enemy.alive and bullet.rect.colliderect(enemy.rect):
+                        enemy.alive = False
+                        bullet.active = False
+                        score += 10
+                        explosions.append(Explosion(enemy.x, enemy.y))
+                        explosion_sound.play()
+                        
+                        # Chance to drop power-up
+                        if random.random() < POWERUP_DROP_CHANCE:
+                            power_type = random.choice(['double_shot', 'shield'])
+                            power_ups.append(PowerUp(enemy.x, enemy.y, power_type))
+                        break
+        # Remove inactive bullets
+        player_bullets = [b for b in player_bullets if b.active]
 
         # Check enemy bullet shooting: randomly let one alive enemy shoot
         alive_enemies = [enemy for enemy in enemies if enemy.alive]
@@ -331,11 +404,32 @@ def main():
             shooter = random.choice(alive_enemies)
             enemy_bullets.append(EnemyBullet(shooter.x + shooter.width//2 - ENEMY_BULLET_WIDTH//2, shooter.y + shooter.height))
 
+        # Update power-ups
+        for power_up in power_ups:
+            if power_up.active:
+                power_up.update()
+                if not spaceship.destroyed and power_up.rect.colliderect(spaceship.rect):
+                    if power_up.type == 'double_shot':
+                        spaceship.double_shot = True
+                        spaceship.power_up_timer = POWERUP_DURATION
+                    elif power_up.type == 'shield':
+                        spaceship.shield = True
+                        spaceship.power_up_timer = POWERUP_DURATION
+                    power_up.active = False
+        power_ups = [p for p in power_ups if p.active]
+
+        # Update power-up timer
+        if spaceship.power_up_timer > 0:
+            spaceship.power_up_timer -= 1
+            if spaceship.power_up_timer <= 0:
+                spaceship.double_shot = False
+                spaceship.shield = False
+
         # Update enemy bullets and check collision with spaceship
         for eb in enemy_bullets:
             if eb.active:
                 eb.update()
-                if not spaceship.destroyed and not spaceship.invulnerable and eb.rect.colliderect(spaceship.rect):
+                if not spaceship.destroyed and not spaceship.invulnerable and not spaceship.shield and eb.rect.colliderect(spaceship.rect):
                     spaceship.destroyed = True
                     explosions.append(Explosion(spaceship.x, spaceship.y))
                     explosion_sound.play()
@@ -362,13 +456,15 @@ def main():
             if random.random() < UFO_SHOOT_PROB:
                 enemy_bullets.append(EnemyBullet(ufo.x + ufo.rect.width//2 - ENEMY_BULLET_WIDTH//2, ufo.y + ufo.rect.height))
 
-            # Check collision with spaceship bullet
-            if bullet and bullet.active and bullet.rect.colliderect(ufo.rect):
-                bullet.active = False
-                explosions.append(Explosion(ufo.x, ufo.y))
-                explosion_sound.play()
-                score += UFO_BONUS_POINTS
-                ufo = None
+            # Check collision with player bullets
+            for bullet in player_bullets:
+                if bullet.active and bullet.rect.colliderect(ufo.rect):
+                    bullet.active = False
+                    explosions.append(Explosion(ufo.x, ufo.y))
+                    explosion_sound.play()
+                    score += UFO_BONUS_POINTS
+                    ufo = None
+                    break
             if ufo and not ufo.active:
                 ufo = None
 
@@ -389,8 +485,10 @@ def main():
         screen.fill(BLACK)
         if not spaceship.destroyed:
             spaceship.draw(screen)
-        if bullet and bullet.active:
-            bullet.draw(screen)
+        # Draw player bullets
+        for bullet in player_bullets:
+            if bullet.active:
+                bullet.draw(screen)
         for enemy in enemies:
             if enemy.alive:
                 enemy.draw(screen)
@@ -410,12 +508,37 @@ def main():
         screen.blit(score_text, (10, 10))
         draw_lives(screen, spaceship)
 
+        # Draw power-ups
+        for power_up in power_ups:
+            power_up.draw(screen)
+
+        # Display active power-ups
+        if spaceship.double_shot:
+            power_text = font.render('Double Shot!', True, (255, 255, 0))
+            screen.blit(power_text, (SCREEN_WIDTH - 150, 10))
+        if spaceship.shield:
+            shield_text = font.render('Shield!', True, (0, 255, 255))
+            screen.blit(shield_text, (SCREEN_WIDTH - 150, 40))
+
         # Display game over message if needed
         if game_over:
-            msg = "You Win!" if all(not enemy.alive for enemy in enemies) else "Game Over!"
+            save_high_score(score)
+            high_scores = load_high_scores()
+            
+            y_offset = SCREEN_HEIGHT // 2
+            msg = 'You Win!' if all(not enemy.alive for enemy in enemies) else 'Game Over!'
             game_over_text = font.render(msg, True, WHITE)
-            screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2,
-                                          SCREEN_HEIGHT // 2 - game_over_text.get_height() // 2))
+            screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, y_offset))
+            
+            # Display high scores
+            y_offset += 50
+            high_score_text = font.render('High Scores:', True, WHITE)
+            screen.blit(high_score_text, (SCREEN_WIDTH // 2 - high_score_text.get_width() // 2, y_offset))
+            
+            for i, hs in enumerate(high_scores[:5]):
+                y_offset += 30
+                score_text = font.render(f'{i+1}. {hs}', True, WHITE)
+                screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, y_offset))
 
         pygame.display.flip()
         clock.tick(FPS)
