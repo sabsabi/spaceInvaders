@@ -584,7 +584,7 @@ def main():
             shield_text = font.render('Shield!', True, (0, 255, 255))
             screen.blit(shield_text, (SCREEN_WIDTH - 150, 40))
 
-        # Display game over message and handle restart
+        # Create overlay surface for game over
         if game_over:
             # Handle high score first
             if not hasattr(spaceship, 'name_entered'):
@@ -595,54 +595,49 @@ def main():
                     save_high_score(score, player_name)
                 spaceship.name_entered = True
             
-            # Game over display loop
-            while True:
-                # Clear screen and draw game over state
-                screen.fill(BLACK)
-                
-                y_offset = SCREEN_HEIGHT // 2 - 100
-                msg = 'You Win!' if all(not enemy.alive for enemy in enemies) else 'Game Over!'
-                game_over_text = font.render(msg, True, WHITE)
-                screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, y_offset))
-                
-                # Display score
-                y_offset += 40
-                final_score_text = font.render(f'Final Score: {score}', True, WHITE)
-                screen.blit(final_score_text, (SCREEN_WIDTH // 2 - final_score_text.get_width() // 2, y_offset))
-                
-                # Display high scores
-                y_offset += 50
-                high_score_text = font.render('High Scores:', True, WHITE)
-                screen.blit(high_score_text, (SCREEN_WIDTH // 2 - high_score_text.get_width() // 2, y_offset))
-                
-                # Load fresh high scores each frame in case they changed
-                high_scores = load_high_scores()
-                for i, hs in enumerate(high_scores[:5]):
-                    y_offset += 30
-                    score_text = font.render(f'{i+1}. {hs["name"]}: {hs["score"]}', True, WHITE)
-                    screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, y_offset))
-                
-                # Display restart/quit instructions
-                y_offset += 50
-                restart_text = font.render('Press SPACE to Play Again or ESC to Quit', True, WHITE)
-                screen.blit(restart_text, (SCREEN_WIDTH // 2 - restart_text.get_width() // 2, y_offset))
-                
-                pygame.display.flip()
-                
-                # Handle input events
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        return False
-                    if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_SPACE:
-                            return True  # Restart game
-                        elif event.key == pygame.K_ESCAPE:
-                            return False  # Quit game
-                
-                clock.tick(FPS)
+            # Create semi-transparent overlay
+            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+            overlay.fill((0, 0, 0))
+            overlay.set_alpha(200)  # 200/255 opacity
+            screen.blit(overlay, (0, 0))
             
-            # We shouldn't reach here, but just in case
-            return False
+            # Draw game over content
+            y_offset = SCREEN_HEIGHT // 2 - 100
+            msg = 'You Win!' if all(not enemy.alive for enemy in enemies) else 'Game Over!'
+            game_over_text = font.render(msg, True, WHITE)
+            screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, y_offset))
+            
+            # Display score
+            y_offset += 40
+            final_score_text = font.render(f'Final Score: {score}', True, WHITE)
+            screen.blit(final_score_text, (SCREEN_WIDTH // 2 - final_score_text.get_width() // 2, y_offset))
+            
+            # Display high scores
+            y_offset += 50
+            high_score_text = font.render('High Scores:', True, WHITE)
+            screen.blit(high_score_text, (SCREEN_WIDTH // 2 - high_score_text.get_width() // 2, y_offset))
+            
+            # Load fresh high scores each frame in case they changed
+            high_scores = load_high_scores()
+            for i, hs in enumerate(high_scores[:5]):
+                y_offset += 30
+                score_text = font.render(f'{i+1}. {hs["name"]}: {hs["score"]}', True, WHITE)
+                screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, y_offset))
+            
+            # Display restart/quit instructions
+            y_offset += 50
+            restart_text = font.render('Press SPACE to Play Again or ESC to Quit', True, WHITE)
+            screen.blit(restart_text, (SCREEN_WIDTH // 2 - restart_text.get_width() // 2, y_offset))
+            
+            # Handle input events for game over
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return False
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_SPACE:
+                        return True  # Restart game
+                    elif event.key == pygame.K_ESCAPE:
+                        return False  # Quit game
 
         pygame.display.flip()
         clock.tick(FPS)
