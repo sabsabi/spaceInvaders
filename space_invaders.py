@@ -1,6 +1,7 @@
 import pygame
 import sys
 import random
+from screens import show_start_screen
 
 # Initialize pygame
 pygame.init()
@@ -9,11 +10,13 @@ pygame.init()
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
 
-# Colors
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-GREEN = (0, 255, 0)
-RED = (255, 0, 0)
+from colors import Colors
+
+# Use color constants from the Colors class
+WHITE = Colors.WHITE
+BLACK = Colors.BLACK
+GREEN = Colors.GREEN
+RED = Colors.RED
 
 # Game settings
 FPS = 60
@@ -69,6 +72,7 @@ class Spaceship:
         self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
         # Load and resize spaceship image
         self.image = pygame.transform.scale(pygame.image.load('sprites/ship.png'), (SHIP_WIDTH, SHIP_HEIGHT))
+        self.destroyed = False
 
     def move(self, dx):
         self.x += dx * self.speed
@@ -172,18 +176,30 @@ class Enemy:
         self.x = x
         self.y = y
         self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
-        # Load and resize enemy image
-        self.image = pygame.transform.scale(pygame.image.load('sprites/enemy.png'), (ENEMY_WIDTH, ENEMY_HEIGHT))
+        # Load and resize enemy images for animation
+        self.image_up = pygame.transform.scale(pygame.image.load('sprites/enemyUP.png'), (ENEMY_WIDTH, ENEMY_HEIGHT))
+        self.image_down = pygame.transform.scale(pygame.image.load('sprites/enemyDown.png'), (ENEMY_WIDTH, ENEMY_HEIGHT))
         self.alive = True
+        self.animation_timer = 0
+        self.animation_interval = 20  # Adjust this value to control animation speed
+        self.use_up_image = True
 
     def update(self, dx, dy):
         self.x += dx
         self.y += dy
         self.rect.x = self.x
         self.rect.y = self.y
+        
+        # Update animation
+        self.animation_timer += 1
+        if self.animation_timer >= self.animation_interval:
+            self.animation_timer = 0
+            self.use_up_image = not self.use_up_image
 
     def draw(self, surface):
-        surface.blit(self.image, (self.x, self.y))
+        if self.alive:
+            current_image = self.image_up if self.use_up_image else self.image_down
+            surface.blit(current_image, (self.x, self.y))
 
 # Create enemy formation
 def create_enemies(rows, cols, x_offset=50, y_offset=50, padding=10):
@@ -198,6 +214,9 @@ def create_enemies(rows, cols, x_offset=50, y_offset=50, padding=10):
 
 # Main game loop
 def main():
+    # Show the start screen
+    show_start_screen(screen)
+
     spaceship = Spaceship()
     bullet = None
     enemies = create_enemies(5, 10)
@@ -269,8 +288,9 @@ def main():
         for eb in enemy_bullets:
             if eb.active:
                 eb.update()
-                if eb.rect.colliderect(spaceship.rect):
-                    explosions.append(Explosion(spaceship.x, spaceship.y, permanent=True))
+                if not spaceship.destroyed and eb.rect.colliderect(spaceship.rect):
+                    spaceship.destroyed = True
+                    explosions.append(Explosion(spaceship.x, spaceship.y))
                     game_over = True
         enemy_bullets = [eb for eb in enemy_bullets if eb.active]
 
@@ -312,7 +332,8 @@ def main():
 
         # Draw everything
         screen.fill(BLACK)
-        spaceship.draw(screen)
+        if not spaceship.destroyed:
+            spaceship.draw(screen)
         if bullet and bullet.active:
             bullet.draw(screen)
         for enemy in enemies:
